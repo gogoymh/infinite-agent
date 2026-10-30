@@ -1,50 +1,56 @@
 # Infinite Agent
 
-A domain-independent agent architecture for function calling, relational database retrieval, and conversations that accumulate requests while work is running.
+Proposed architecture for a general-purpose agent with function calling and relational database retrieval.
 
-**Status:** architecture and reproducible document tooling. The agent runtime, model adapters, database connectors, and delivery adapters are still to be implemented.
+```mermaid
+flowchart TD
+    U[User message] --> S[Accumulate requests and prior results]
+    S --> A[Immediate receipt acknowledgement<br/>once per received message]
+    A --> D[Select all required functions<br/>no fixed count limit]
+    FR[Function descriptions] -.-> D
+    D --> P[Prepare function inputs]
+    P -->|Database lookup| T[Select schema or registered SQL]
+    DB[Schema descriptions<br/>relation links and registered SQL] -.-> T
+    P -->|Other function| K[Reuse confirmed arguments]
+    T -->|Registered SQL| K
+    T -->|New SQL required| N[LLM function calling<br/>SQL, argument definitions and values]
+    K -->|Missing arguments| L[LLM function calling<br/>extract missing arguments]
+    K -->|Arguments confirmed| Q[Queue ready work<br/>max_concurrent_queries]
+    N --> V[Validate SQL and arguments]
+    L --> V
+    V --> Q
+    Q --> E[Execute within the concurrency setting<br/>preserve dependency and write order]
+    E --> R[Accumulate query results]
+    R --> W[Collect queued work and running results]
+    W -->|Ready work remains and a slot is available| Q
+    W -->|Additional message received| S
+    W -->|Queued and running work complete| C{Accumulated information sufficient?}
+    C -->|Yes| F[Generate one combined final answer]
+    C -->|No| H[Select next action]
+    H -->|Additional function needed| D
+    H -->|Explore related data| ER{Related link exists?}
+    ER -->|Yes| NR{Related information needed?}
+    NR -->|Yes| LK[Read linked lookup target]
+    LK --> T
+    ER -->|No| H
+    NR -->|No| H
+    H -->|Clarification or status response needed| F
+    F --> G[Check current accumulated request state]
+    G -->|New request content or pending work| S
+    G -->|Ready| O[Send one final response]
 
-## How it works
-
-1. Acknowledge every received message immediately with a short template.
-2. Add follow-up requests to the same active request, preserving earlier requirements, results, and running calls.
-3. Select all functions needed to fulfill the accumulated request. Function selection has no fixed count limit.
-4. Run ready queries through a queue controlled by `max_concurrent_queries`. Dependencies and writes retain their required order.
-5. Reuse confirmed arguments and registered SQL. Use LLM function calling for missing arguments or new SQL, then validate before execution.
-6. Accumulate results, resolve remaining work, and assess whether the full request is ready for a response.
-7. Generate one combined answer. Check the request version and delivery state before committing one logical final response.
-
-Jev is an optional decision-router adapter for categorical and binary decisions. LLMs handle argument extraction, SQL generation, interpretation when needed, and answer drafting. Code manages execution, queues, request state, validation, and delivery.
-
-## Documents
-
-- [Architecture and state model](docs/architecture.md)
-- [Career-domain HTML example](docs/examples/career/ontology-chat-plan.html)
-- [Career-domain PDF example](docs/examples/career/ontology-chat-plan.pdf)
-
-The career example illustrates one application of the architecture. Function registries, schemas, relation links, model providers, and delivery channels are intended to be replaceable across domains.
-
-The example uses public job and company facts; résumé retrieval is a labeled scenario assumption. Document generation does not call model APIs or connect to production databases.
-
-## Build and preview the documents
-
-Prerequisites: Node.js 20.16 or later, npm, Python 3, and a Korean-capable Noto Sans CJK font.
-
-```sh
-npm install
-npx playwright install chromium
-npm run docs:build
-npm run docs:serve
+    classDef jev fill:#d3a4ff,stroke:#6200cc,color:#203747;
+    classDef llm fill:#98efa9,stroke:#006a28,color:#203747;
+    classDef code fill:#f3f6f8,stroke:#8796a1,color:#203747;
+    classDef data fill:#ffffff,stroke:#aab9c5,color:#203747;
+    class D,T,C,H,ER,NR jev;
+    class N,L,F llm;
+    class S,A,P,K,V,Q,E,R,W,LK,G,O code;
+    class FR,DB data;
 ```
 
-Open <http://127.0.0.1:8848/examples/career/ontology-chat-plan.html> for the local preview. These commands build and serve the documentation; they do not start an agent service.
+- **Jev (purple):** function and schema selection, information sufficiency, and relationship decisions.
+- **LLM (green):** missing argument extraction, new SQL generation, and final answer generation.
+- **Code (gray):** immediate acknowledgements, concurrency control, queues, validation, and accumulated request state.
 
-An existing Chrome installation can be selected with `CHROME_PATH` instead of installing Playwright's Chromium. After editing the document sources, run `npm run docs:check` to verify the layout. Check outputs are written to `.artifacts/`.
-
-## Implementation boundaries
-
-The runtime should expose adapters for decision routing, LLM function calling, SQL validation and execution, state persistence, and message delivery. Database access and side effects must follow each registered function's execution contract.
-
-[config.example.json](config.example.json) shows the proposed concurrency setting. It is an example contract for the future runtime.
-
-One logical final response is recorded per active request. Reliable delivery across retries requires stable response identifiers and duplicate suppression in the delivery adapter.
+Additional messages and query results accumulate in the same active request. Required functions are selected without a count limit; only simultaneous queries are controlled by `max_concurrent_queries`. The accumulated request receives one combined final response.
